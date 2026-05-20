@@ -152,6 +152,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     })
     const userId = ref(getStoredUserId())
     const userName = ref(getStoredUserName() || '')
+    const connectionId = ref<string>('')
 
     // ─── Computed ───────────────────────────────────────────
     const sortedMessages = computed(() => mapGroupMessages([...messages.value].sort((a, b) => a.timestamp - b.timestamp)))
@@ -194,7 +195,33 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             }
         }
 
-        // Listen for all event types
+        // Listen for all event types — 'connected' MUST be first so connectionId
+        // is captured before any join-room or send action is called.
+        es.addEventListener('connected', (e: MessageEvent) => {
+            try {
+                const data = JSON.parse(e.data)
+                if (data.connectionId && data.connectionId !== connectionId.value) {
+                    connectionId.value = data.connectionId
+                    // SSE reconnected with a new ID — must re-join the current room
+                    // so the new connection is tied to the room the user is viewing.
+                    // Without this, send() fails with 400 'Not in room'.
+                    if (currentRoomId.value) {
+                        sseAction('join-room', {
+                            roomId: currentRoomId.value,
+                            userId: userId.value,
+                            name: userName.value || undefined,
+                            connectionId: connectionId.value,
+                            description: localStorage.getItem('gc_user_description') || undefined,
+                        }).catch(() => { /* best-effort on reconnect */ })
+                    }
+                }
+                if (!data.roomId) return
+                handleEvent('connected', data)
+            } catch (err) {
+                console.error('[GroupChat] failed to parse connected event:', err)
+            }
+        })
+
         const eventTypes = [
             'message', 'message_stream_start', 'message_stream_delta',
             'message_reasoning_delta', 'message_stream_end',
@@ -217,6 +244,14 @@ export const useGroupChatStore = defineStore('groupChat', () => {
 
     function handleEvent(eventName: string, data: any) {
         switch (eventName) {
+            case 'connected': {
+                // Initial SSE handshake — capture connectionId for subsequent actions.
+                // Also sync room info if the SSE joins us to a room we're viewing.
+                if (data.connectionId && !connectionId.value) {
+                    connectionId.value = data.connectionId
+                }
+                break
+            }
             case 'message': {
                 const msg = data as ChatMessage
                 if (msg.roomId !== currentRoomId.value) return
@@ -434,11 +469,15 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             isJoining.value = false
         }
 
-        // Join via SSE action for real-time updates
+        // Join via SSE action for real-time updates — pass connectionId so the
+        // server switches our SSE stream to this room. Without it, broadcasts
+        // target the old room and the client never sees live messages.
         try {
-            const response = await sseAction('join', {
+            const response = await sseAction('join-room', {
                 roomId,
+                userId: userId.value,
                 name: userName.value || undefined,
+                connectionId: connectionId.value || undefined,
                 description: localStorage.getItem('gc_user_description') || undefined,
             })
             if (response.members) members.value = response.members
@@ -482,10 +521,35 @@ export const useGroupChatStore = defineStore('groupChat', () => {
                 role: 'user',
                 attachments: attachments.map(att => ({ ...att, url: urlMap.get(att.name) || att.url, file: undefined })),
             })
+        } else {
+            // Optimistic local push — the SSE event will update with the server's message
+            messages.value.push({
+                id: messageId,
+                roomId: currentRoomId.value,
+                senderId: userId.value,
+                senderName: userName.value || 'You',
+                content: typeof finalContent === 'string' ? finalContent : JSON.stringify(finalContent),
+                timestamp: Date.now(),
+                role: 'user',
+                tool_call_id: null,
+                tool_calls: null,
+                tool_name: null,
+                finish_reason: null,
+                reasoning: null,
+                reasoning_details: null,
+                reasoning_content: null,
+            })
         }
 
         try {
-            await sseAction('send', { roomId: currentRoomId.value, id: messageId, content: finalContent })
+            await sseAction('send', {
+                roomId: currentRoomId.value,
+                id: messageId,
+                content: finalContent,
+                userId: userId.value,
+                name: userName.value || undefined,
+                connectionId: connectionId.value || undefined,
+            })
         } catch (err: any) {
             messages.value = messages.value.filter(m => m.id !== messageId)
             throw err

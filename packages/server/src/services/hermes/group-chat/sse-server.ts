@@ -764,6 +764,17 @@ export class SseGroupChatServer {
     this.storage.addRoomMember(rid, userId, userName, description || '')
     room.addOrUpdateMember(connectionId, userId, userName, description || '')
 
+    // Move existing SSE connections for this user to the target room.
+    // Without this, messages broadcast to the target room won't reach the
+    // user's SSE connection (which stays on the original room from handleEventsStream).
+    for (const [cid, conn] of this.connections) {
+      if (conn.userId === userId && conn.alive && conn.roomId !== rid) {
+        const oldRoom = conn.roomId
+        conn.roomId = rid
+        logger.debug(`[SseGroupChat] moved connection ${cid} for user ${userId} from ${oldRoom} to ${rid}`)
+      }
+    }
+
     const messages = this.storage.getMessages(rid)
     const agents = this.storage.getRoomAgents(rid)
 
