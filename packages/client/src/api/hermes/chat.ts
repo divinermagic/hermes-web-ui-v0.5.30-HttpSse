@@ -5,7 +5,7 @@
  * Event types, payloads, and handler signatures are preserved so stores don't need changes.
  */
 
-import { getBaseUrl, getApiKey } from '@/config'
+import { getApiKey, getBaseUrlValue as getConfiguredBaseUrl } from '../client'
 
 export interface ContentBlock {
   type: string
@@ -75,7 +75,7 @@ let globalListenersRegistered = false
 
 function getBaseUrlValue(): string {
   try {
-    return getBaseUrl()
+    return getConfiguredBaseUrl()
   } catch {
     return ''
   }

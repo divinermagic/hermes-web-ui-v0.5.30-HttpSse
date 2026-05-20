@@ -84,16 +84,6 @@ function getBaseUrl(): string {
     return base
 }
 
-function sseUrl(roomId: string): string {
-    const token = getApiKey()
-    const userId = getStoredUserId()
-    const name = getStoredUserName()
-    const params = new URLSearchParams({ roomId, userId })
-    if (name) params.set('name', name)
-    if (token) params.set('token', token)
-    return `${getBaseUrl()}/api/hermes/group-chat/events?${params.toString()}`
-}
-
 function actionUrl(action: string): string {
     const token = getApiKey()
     const sep = action.includes('?') ? '&' : '?'
@@ -131,7 +121,7 @@ export function connectGroupChat(opts?: { userId?: string; userName?: string; de
     return eventSource
 }
 
-export function getSocket(): EventSource | null {
+export function getGroupChatEventSource(): EventSource | null {
     return eventSource
 }
 

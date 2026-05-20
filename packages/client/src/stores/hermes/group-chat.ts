@@ -6,7 +6,6 @@ import type { Attachment, ContentBlock } from './chat'
 import {
     connectGroupChat,
     disconnectGroupChat,
-    getSocket,
     getStoredUserId,
     getStoredUserName,
     type RoomInfo,
@@ -121,8 +120,6 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     const autoPlaySpeechEnabled = ref(false)
     const pendingApprovals = ref<Map<string, GroupPendingApproval>>(new Map())
 
-    let _esConnected = false
-
     function setAutoPlaySpeech(enabled: boolean) {
         autoPlaySpeechEnabled.value = enabled
     }
@@ -180,7 +177,6 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         es.addEventListener('open', () => {
             console.log('[GroupChat] connected via SSE')
             connected.value = true
-            _esConnected = true
             error.value = null
         })
 
@@ -396,7 +392,6 @@ export const useGroupChatStore = defineStore('groupChat', () => {
 
     function disconnect() {
         disconnectGroupChat()
-        _esConnected = false
         connected.value = false
         currentRoomId.value = null
         messages.value = []
