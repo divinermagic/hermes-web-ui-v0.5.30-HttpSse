@@ -133,6 +133,13 @@ export async function bootstrap() {
   app.use(bodyParser())
   console.log('[bootstrap] cors + bodyParser registered')
 
+  // Chat run SSE server (replaces Socket.IO ChatRunSocket)
+  // 必须注册在 generic Hermes proxy routes / proxyMiddleware 之前以防被捕获
+  sseChatRunServer = new SseChatRun()
+  setSseChatRunServer(sseChatRunServer)
+  sseChatRunServer.setupRoutes(app)
+  console.log('[bootstrap] SSE chat run server initialized')
+
   // Register all routes (handles auth internally)
   const proxyMiddleware = registerRoutes(app, requireAuth(authToken))
   app.use(proxyMiddleware)
@@ -175,12 +182,6 @@ export async function bootstrap() {
   sseGroupChatServer = new SseGroupChatServer()
   setSseGroupChatServer(sseGroupChatServer)
   console.log('[bootstrap] SSE group chat server initialized')
-
-  // Chat run SSE server (replaces Socket.IO ChatRunSocket)
-  sseChatRunServer = new SseChatRun()
-  setSseChatRunServer(sseChatRunServer)
-  sseChatRunServer.setupRoutes(app)
-  console.log('[bootstrap] SSE chat run server initialized')
 
   // Session deleter — periodically drain pending session deletes
   const { SessionDeleter } = await import('./services/hermes/session-deleter')
