@@ -133,8 +133,9 @@ export async function bootstrap() {
   app.use(bodyParser())
   console.log('[bootstrap] cors + bodyParser registered')
 
-  // Chat run SSE server (replaces Socket.IO ChatRunSocket)
-  // 必须注册在 generic Hermes proxy routes / proxyMiddleware 之前以防被捕获
+  // Chat run SSE server (replaces Socket.IO ChatRunSocket).
+  // Register before the generic Hermes proxy routes; otherwise /api/hermes/chat-run/*
+  // is swallowed by the proxy and returns "GatewayManager not initialized".
   sseChatRunServer = new SseChatRun()
   setSseChatRunServer(sseChatRunServer)
   sseChatRunServer.setupRoutes(app)

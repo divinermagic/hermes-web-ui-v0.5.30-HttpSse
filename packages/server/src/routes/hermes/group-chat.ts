@@ -17,6 +17,10 @@ export function getGroupChatServer(): GroupChatServer | SseGroupChatServer | nul
 
 export function setSseGroupChatServer(server: SseGroupChatServer) {
     sseServer = server
+    // REST room-management routes still check `chatServer` directly.
+    // In HTTP/SSE mode there is no legacy GroupChatServer, so expose the SSE
+    // server through the same variable to keep create/list/update room APIs working.
+    chatServer = server as any
 }
 
 export function getSseGroupChatServer(): SseGroupChatServer | null {

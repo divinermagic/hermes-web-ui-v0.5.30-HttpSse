@@ -99,7 +99,13 @@ async function sseAction(action: string, body: any): Promise<any> {
     })
     if (!res.ok) {
         const errData = await res.json().catch(() => ({}))
-        throw new Error(errData?.error || `HTTP ${res.status}`)
+        const rawError = errData?.error
+        const errorMessage = typeof rawError === 'string'
+            ? rawError
+            : (rawError && typeof rawError === 'object' && typeof (rawError as any).message === 'string')
+                ? (rawError as any).message
+                : JSON.stringify(rawError || `HTTP ${res.status}`)
+        throw new Error(errorMessage)
     }
     return res.json()
 }
@@ -479,7 +485,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         }
 
         try {
-            await sseAction('message', { roomId: currentRoomId.value, id: messageId, content: finalContent })
+            await sseAction('send', { roomId: currentRoomId.value, id: messageId, content: finalContent })
         } catch (err: any) {
             messages.value = messages.value.filter(m => m.id !== messageId)
             throw err

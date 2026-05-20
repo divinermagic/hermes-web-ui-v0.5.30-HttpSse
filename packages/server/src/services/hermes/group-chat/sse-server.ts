@@ -596,6 +596,13 @@ export class SseGroupChatServer {
 
     // Set up SSE headers
     const res = ctx.res
+
+    // Prevent Koa from handling the response — we manage the raw stream directly.
+    // Without this, Koa's ctx.respond logic sees no ctx.body and ends the SSE
+    // stream shortly after the middleware returns, causing EventSource errors
+    // in the browser (reconnection loop every ~3 seconds).
+    ctx.respond = false
+
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',

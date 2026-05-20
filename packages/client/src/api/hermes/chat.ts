@@ -151,7 +151,26 @@ function dispatchEvent(eventName: string, data: RunEvent): void {
   }
 }
 
-function setupGlobalEventSource(): EventSource {
+function setupGlobalEventSource(sessionId?: string): EventSource {
+  // If a sessionId is provided, always create a fresh EventSource (the session
+  // determines which events we need; reusing a source without the session_id
+  // means the server returns 400 and the client never receives events).
+  if (sessionId) {
+    if (globalEventSource && globalEventSource.readyState !== EventSource.CLOSED) {
+      // Check if the existing EventSource was already created with this session_id
+      const existingUrl = (globalEventSource as any)._url
+      if (existingUrl && existingUrl.includes(`session_id=${encodeURIComponent(sessionId)}`)) {
+        return globalEventSource
+      }
+      globalEventSource.close()
+    }
+    globalEventSource = new EventSource(sseUrl(sessionId))
+    ;(globalEventSource as any)._url = sseUrl(sessionId)
+    globalListenersRegistered = false
+    registerGlobalListeners()
+    return globalEventSource
+  }
+
   if (globalEventSource && globalEventSource.readyState !== EventSource.CLOSED) {
     return globalEventSource
   }
@@ -163,8 +182,13 @@ function setupGlobalEventSource(): EventSource {
   }
 
   globalEventSource = new EventSource(sseUrl())
+  ;(globalEventSource as any)._url = sseUrl()
+  registerGlobalListeners()
+  return globalEventSource
+}
 
-  if (!globalListenersRegistered) {
+function registerGlobalListeners(): void {
+  if (!globalEventSource || globalListenersRegistered) return
     const events = [
       'message.delta', 'reasoning.delta', 'thinking.delta',
       'reasoning.available', 'tool.started', 'tool.completed',
@@ -206,9 +230,6 @@ function setupGlobalEventSource(): EventSource {
     }
 
     globalListenersRegistered = true
-  }
-
-  return globalEventSource
 }
 
 // ─── Public API ──────────────────────────────────────────────
@@ -271,9 +292,8 @@ export function resumeSession(
     queueLength?: number
   }) => void,
 ): EventSource {
-  // The global EventSource already streams all events.
-  // We set up a one-shot handler for the 'resumed' event.
-  const es = setupGlobalEventSource()
+  // Set up SSE for this session
+  const es = setupGlobalEventSource(sessionId)
 
   const handler = (e: MessageEvent) => {
     try {
@@ -305,8 +325,8 @@ export function startRunViaSocket(
     throw new Error('session_id is required for startRunViaSocket')
   }
 
-  // Ensure global EventSource is connected
-  setupGlobalEventSource()
+  // Ensure global EventSource is connected for this session
+  setupGlobalEventSource(sid)
 
   let closed = false
 
