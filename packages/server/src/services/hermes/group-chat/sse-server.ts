@@ -157,6 +157,11 @@ class ChatRoom {
     return undefined
   }
 
+  getOnlineMemberByUserId(userId: string): Member | undefined {
+    const member = this.members.get(userId)
+    return member?.online ? member : undefined
+  }
+
   hasOnlineMember(connectionId: string): boolean {
     return this.getOnlineMemberByConnectionId(connectionId) !== undefined
   }
@@ -610,6 +615,13 @@ export class SseGroupChatServer {
       'X-Accel-Buffering': 'no',
     })
 
+    // Disable socket timeout so the SSE connection stays alive indefinitely.
+    // Node.js default keepAliveTimeout is 5s which kills the connection before
+    // the first heartbeat (was 30s). Combined with a 15s heartbeat below,
+    // the connection survives proxy timeouts (nginx default 60s).
+    const req = ctx.req
+    if (req.socket) req.socket.setTimeout(0)
+
     const connectionId = existingConnectionId || generateId()
 
     // Reconnect cleanup: remove old connection for same userId in same room
@@ -636,7 +648,7 @@ export class SseGroupChatServer {
         if (conn.alive) {
           try { res.write(': heartbeat\n\n') } catch { /* ignore */ }
         }
-      }, 30000),
+      }, 15000),
     }
     this.connections.set(connectionId, conn)
 
@@ -749,7 +761,7 @@ export class SseGroupChatServer {
     }
 
     const rid = roomId || 'general'
-    const connectionId = String(ctx.query?.connectionId || generateId())
+    const connectionId = String(ctx.request.body?.connectionId || ctx.query?.connectionId || generateId())
     const userId = reqUserId || connectionId
 
     let room = this.rooms.get(rid)
@@ -800,13 +812,36 @@ export class SseGroupChatServer {
     const room = this.rooms.get(roomId)
     const connectionId = String(data.connectionId || '')
 
-    if (!room || (connectionId && !room.hasOnlineMember(connectionId))) {
+    if (!room) {
+      logger.warn(
+        `[SseGroupChat] handleMessage blocked — roomId=${roomId} roomExists=false connectionsSize=${this.connections.size}`,
+      )
       ctx.body = { error: 'Not in room' }; ctx.status = 400; return
     }
 
-    const member = connectionId ? room.getOnlineMemberByConnectionId(connectionId) : undefined
-    const userId = member?.userId || data.userId || connectionId
-    const userName = member?.name || data.name || `User-${userId.slice(0, 6)}`
+    // Determine sender identity — prefer connectionId lookup, fall back to userId
+    let member = connectionId ? room.getOnlineMemberByConnectionId(connectionId) : undefined
+    let userId = member?.userId || data.userId || connectionId
+    let userName = member?.name || data.name || `User-${userId.slice(0, 6)}`
+
+    // If the connectionId is stale (SSE reconnected), try to find the member by userId
+    if (!member && data.userId) {
+      const byUserId = room.getOnlineMemberByUserId(data.userId)
+      if (byUserId) {
+        member = byUserId
+        userId = member.userId
+        userName = member.name
+        logger.debug(`[SseGroupChat] handleMessage: found member by userId=${data.userId} (connectionId was stale)`)
+      }
+    }
+
+    // Only block if we truly can't identify the sender
+    if (!member && connectionId && !data.userId) {
+      logger.warn(
+        `[SseGroupChat] handleMessage blocked — no member found for connectionId=${connectionId} or userId`,
+      )
+      ctx.body = { error: 'Not in room' }; ctx.status = 400; return
+    }
 
     const msg: ChatMessage = {
       id: data.id || generateId(),
