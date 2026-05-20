@@ -195,6 +195,72 @@ example.com {
 
 ---
 
+## Changelog
+
+### 2026-05-20 — 8 Bug 修复（生产就绪）
+
+此版本在 HTTP/SSE 改造的基础上修复了 8 个关键 Bug，经本机验证 ChatRun 与群聊均正常。
+
+#### Bug 1 — SSE chat-run 路由被 proxy 拦截
+- **现象**：`/api/hermes/chat-run/*` 返回 `GatewayManager not initialized`
+- **根因**：`SseChatRun.setupRoutes()` 在 `registerRoutes()` 之后执行，被 proxy 中间件吞掉
+- **修复**：`packages/server/src/index.ts` — 将 SseChatRun 初始化移到 registerRoutes 之前
+
+#### Bug 2 — 群聊 REST API 返回 503
+- **现象**：创建/列表/删除房间返回 `{"error":"Group chat not initialized"}`
+- **根因**：`setSseGroupChatServer()` 只设了 `sseServer`，REST 路由检查 `chatServer` 为空
+- **修复**：`packages/server/src/routes/hermes/group-chat.ts` — 同时赋值 `chatServer = server as any`
+
+#### Bug 3 — 群聊发送消息显示 `[object Object]`
+- **现象**：@智能体发送消息后 UI 显示 `[object Object]`
+- **根因**：客户端调 `/group-chat/message`，服务端路由是 `/group-chat/send`；proxy 返回嵌套 error 对象被塞进 `Error()` → `err.message = "[object Object]"`
+- **修复**：客户端 store 和 API 模块改 `message` → `send`，加固错误提取逻辑
+
+#### Bug 4 — 普通 1v1 聊天不工作
+- **现象**：普通聊天没有响应，消息发不出
+- **根因**：全局 EventSource 创建时未带 `session_id` 参数，服务端返回 400
+- **修复**：`packages/client/src/api/hermes/chat.ts` — `setupGlobalEventSource` 接受 sessionId，resume 和 startRun 传入
+
+#### Bug 5 — 群聊 SSE 每 3 秒断开重连
+- **现象**：浏览器 Console 不断出现 `[GroupChat] SSE error`，EventSource 每 ~3 秒重连
+- **根因**：`handleEventsStream` 用 `res.writeHead()` 直接写响应，但未设 `ctx.respond = false`，Koa 自动关闭了 SSE 流
+- **修复**：`packages/server/src/services/hermes/group-chat/sse-server.ts` — 加 `ctx.respond = false`
+
+#### Bug 6 — 群聊消息不实时显示
+- **现象**：发消息后看不到自己的消息和 Agent 回复，刷新后才出现
+- **根因**：`join-room` 未传 `connectionId`，SSE 连接未切换到目标房间；`send` 未传 `userId`
+- **修复**：
+  - store 捕获 `connected` 事件中的 `connectionId`
+  - `join-room` 和 `send` 传递 `connectionId`/`userId`
+  - 纯文本消息乐观本地推送（立即显示）
+
+#### Bug 7 — SSE 重连后 send 返回 400
+- **现象**：SSE 断连重连后发消息返回 `400 Not in room`
+- **根因**：重连产生新 `connectionId`，但未重新 `join-room`，新连接不在房间里
+- **修复**：`connected` 事件中检测 connectionId 变化时自动调用 `join-room`
+
+#### Bug 8 — SSE 连接 5 秒后断开（connectionsSize=0）
+- **现象**：日志显示 `connectionsSize=0`，`room members: []`，send 持续 400
+- **根因**：Node.js 默认 `keepAliveTimeout=5s`，心跳 30s 一次，初始事件后 5 秒无数据即断开
+- **修复**：
+  - `res.writeHead` 后加 `req.socket.setTimeout(0)` 禁用 socket 超时
+  - 心跳从 30s 缩短到 15s
+
+---
+
+**修改文件汇总**（5 个文件）：
+
+| 文件 | 涉及 Bug |
+|------|---------|
+| `packages/server/src/index.ts` | Bug 1 |
+| `packages/server/src/routes/hermes/group-chat.ts` | Bug 2 |
+| `packages/server/src/services/hermes/group-chat/sse-server.ts` | Bug 2, 5, 8 |
+| `packages/client/src/api/hermes/chat.ts` | Bug 4 |
+| `packages/client/src/stores/hermes/group-chat.ts` | Bug 3, 6, 7 |
+| `packages/client/src/api/hermes/group-chat.ts` | Bug 3 |
+
+---
+
 ## License
 
 保持上游项目许可证约束。详见 [`LICENSE`](./LICENSE)。
