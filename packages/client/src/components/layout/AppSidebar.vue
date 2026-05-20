@@ -2,7 +2,7 @@
 import { computed, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { NButton, NModal, useMessage } from "naive-ui";
+import { NModal } from "naive-ui";
 import { useAppStore } from "@/stores/hermes/app";
 import ModelSelector from "./ModelSelector.vue";
 import ProfileSelector from "./ProfileSelector.vue";
@@ -12,7 +12,6 @@ import { useSessionSearch } from '@/composables/useSessionSearch'
 import { changelog } from "@/data/changelog";
 
 const { t } = useI18n();
-const message = useMessage();
 const route = useRoute();
 const router = useRouter();
 const appStore = useAppStore();
@@ -40,7 +39,11 @@ function handleNav(key: string) {
   router.push({ name: key });
 }
 
+// Upgrade functions disabled — this is a fixed fork, no auto-update
+/*
 async function handleUpdate() {
+  const { useMessage } = await import("naive-ui");
+  const message = useMessage();
   const ok = await appStore.doUpdate();
   if (ok) {
     message.success(t('sidebar.updateSuccess'), { duration: 5000 });
@@ -52,6 +55,7 @@ async function handleUpdate() {
 function handleReloadClient() {
   appStore.reloadClient();
 }
+*/
 
 function handleLogout() {
   localStorage.clear();
@@ -303,12 +307,15 @@ function openChangelog() {
         <span class="version-text" @click="openChangelog">Web UI v{{ appStore.serverVersion || "0.1.0" }}</span>
         <ThemeSwitch />
       </div>
+      <!-- Upgrade buttons hidden — this is a fixed fork, no auto-update -->
+      <!--
       <NButton v-if="appStore.clientOutdated" type="warning" size="tiny" block class="update-btn" @click="handleReloadClient">
         {{ t('sidebar.reloadClientVersion', { version: appStore.serverVersion }) }}
       </NButton>
       <NButton v-if="appStore.updateAvailable" type="primary" size="tiny" block class="update-btn" :loading="appStore.updating" @click="handleUpdate">
         {{ appStore.updating ? t('sidebar.updating') : t('sidebar.updateVersion', { version: appStore.latestVersion }) }}
       </NButton>
+      -->
     </div>
 
     <!-- Changelog modal -->
