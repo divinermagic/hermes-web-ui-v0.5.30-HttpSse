@@ -162,6 +162,40 @@ describe('Database Schema Synchronization', () => {
       expect(row).toBeTruthy()
       expect(row.session_id).toBe('test-1')
     })
+
+    it('migrates legacy session_usage tables that lack id and created_at', async () => {
+      const { initAllHermesTables, USAGE_TABLE } = await import('../../packages/server/src/db/hermes/schemas')
+
+      const db = getTestDb()
+      db.exec(`CREATE TABLE "${USAGE_TABLE}" (
+        session_id TEXT PRIMARY KEY,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL,
+        cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+        reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+        model TEXT NOT NULL DEFAULT '',
+        profile TEXT NOT NULL DEFAULT 'default'
+      )`)
+      db.prepare(`INSERT INTO "${USAGE_TABLE}" (session_id, input_tokens, output_tokens, updated_at, model, profile) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run('legacy-session', 11, 22, 1234567890, 'legacy-model', 'legacy-profile')
+
+      initAllHermesTables()
+
+      const cols = getTableColumns(db, USAGE_TABLE)
+      expect(cols.has('id')).toBe(true)
+      expect(cols.has('created_at')).toBe(true)
+
+      const row = db.prepare(`SELECT * FROM "${USAGE_TABLE}" WHERE session_id = ?`).get('legacy-session') as any
+      expect(row).toBeTruthy()
+      expect(row.id).toBe(1)
+      expect(row.input_tokens).toBe(11)
+      expect(row.output_tokens).toBe(22)
+      expect(row.created_at).toBe(1234567890)
+      expect(row.model).toBe('legacy-model')
+      expect(row.profile).toBe('legacy-profile')
+    })
   })
 
   describe('Schema sync with single-column primary keys', () => {

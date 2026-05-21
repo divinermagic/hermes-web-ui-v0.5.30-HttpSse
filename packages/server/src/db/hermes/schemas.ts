@@ -252,8 +252,7 @@ function addMissingSafeColumns(
   tableName: string,
   schema: Record<string, string>,
 ): void {
-  const columns = db.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all() as Array<{ name: string }>
-  const existingColumns = new Set(columns.map(col => col.name))
+  const existingColumns = getTableColumnNames(db, tableName)
 
   for (const [columnName, columnDef] of Object.entries(schema)) {
     if (existingColumns.has(columnName)) continue
@@ -262,6 +261,69 @@ function addMissingSafeColumns(
       continue
     }
     db.exec(`ALTER TABLE ${quoteIdentifier(tableName)} ADD COLUMN ${quoteIdentifier(columnName)} ${columnDef}`)
+  }
+}
+
+function getTableColumnNames(
+  db: NonNullable<ReturnType<typeof getDb>>,
+  tableName: string,
+): Set<string> {
+  const columns = db.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all() as Array<{ name: string }>
+  return new Set(columns.map(col => col.name))
+}
+
+/**
+ * Migrate the legacy 0.4.x/early-0.5.x usage table to the append-only schema.
+ *
+ * Older deployments created session_usage as one row per session with session_id
+ * as the primary key and updated_at as the only timestamp. The current usage
+ * store writes append-only rows and reads them with ORDER BY id / created_at.
+ * Generic syncTable intentionally refuses to add PRIMARY KEY or NOT NULL
+ * columns without defaults, so this known legacy table needs a targeted,
+ * data-preserving rebuild.
+ */
+function migrateLegacyUsageTableIfNeeded(): void {
+  const db = getDb()
+  if (!db || !tableExists(db, USAGE_TABLE)) return
+
+  const existingColumns = getTableColumnNames(db, USAGE_TABLE)
+  if (existingColumns.has('id') && existingColumns.has('created_at')) return
+
+  const tempTable = `${USAGE_TABLE}__legacy_${Date.now()}`
+  const schemaColumns = Object.keys(USAGE_SCHEMA)
+  const now = Date.now()
+
+  db.exec('BEGIN')
+  try {
+    db.exec(`ALTER TABLE ${quoteIdentifier(USAGE_TABLE)} RENAME TO ${quoteIdentifier(tempTable)}`)
+    createTable(db, USAGE_TABLE, USAGE_SCHEMA, 'id')
+
+    const selectExpressions = schemaColumns.map((columnName) => {
+      if (columnName === 'id') return 'NULL'
+      if (columnName === 'created_at') {
+        if (existingColumns.has('created_at')) return quoteIdentifier('created_at')
+        if (existingColumns.has('updated_at')) return quoteIdentifier('updated_at')
+        return String(now)
+      }
+      if (existingColumns.has(columnName)) return quoteIdentifier(columnName)
+
+      if (columnName === 'session_id') return "''"
+      if (['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'reasoning_tokens'].includes(columnName)) return '0'
+      if (columnName === 'model') return "''"
+      if (columnName === 'profile') return "'default'"
+      return 'NULL'
+    })
+
+    db.exec(`
+      INSERT INTO ${quoteIdentifier(USAGE_TABLE)} (${schemaColumns.map(quoteIdentifier).join(', ')})
+      SELECT ${selectExpressions.join(', ')} FROM ${quoteIdentifier(tempTable)}
+    `)
+    db.exec(`DROP TABLE ${quoteIdentifier(tempTable)}`)
+    db.exec('COMMIT')
+    console.warn(`[Schema] Migrated legacy ${USAGE_TABLE} table to append-only schema`)
+  } catch (e) {
+    try { db.exec('ROLLBACK') } catch { /* ignore rollback failures */ }
+    throw e
   }
 }
 
@@ -312,6 +374,7 @@ export function initAllHermesTables(): void {
 
   try {
     // Usage store
+    migrateLegacyUsageTableIfNeeded()
     syncTable(USAGE_TABLE, USAGE_SCHEMA, { primaryKey: 'id' })
 
     // Session store

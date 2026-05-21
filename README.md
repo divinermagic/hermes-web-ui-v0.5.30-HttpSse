@@ -277,7 +277,7 @@ curl -sS -m 5 http://127.0.0.1:8642/health
 
 ```text
 WebUI version: 0.5.30
-WebUI live dir: /root/hermes-web-ui-v0.5.30-HttpSse-live-20260521-095902
+WebUI live dir: /root/hermes-web-ui-v0.5.30-HttpSse-live-20260521-session-usage-hotfix
 systemd override: /etc/systemd/system/hermes-webui.service.d/override-v0530-httpsse.conf
 pre-upgrade backup: /root/output/pre-upgrade-webui-HttpSse-20260521-095535
 webui 0.5.30 backup: /root/outputs/bak-webui0530.zip
@@ -294,6 +294,16 @@ legacy 0.4.9 rollback backup: /root/output/bak-webui049.zip
 - Group Chat SSE + REST smoke test 通过。
 - `/root/.hermes` 未被覆盖。
 - 原有 cron jobs、skills、scripts、profiles、sessions、outputs 均仍存在。
+
+### 灰度分支修改记录
+
+#### 2026-05-21 — 修复单聊回复后页面闪一下的问题
+
+- **现象**：普通单聊发送问题后，大模型回复过程中界面偶发闪动；浏览器 Console 出现 `Socket.IO run stream error: table session_usage has no column named created_at`。
+- **根因**：生产库 `/root/.hermes-web-ui/hermes-web-ui.db` 中的旧 `session_usage` 表来自早期版本，只有 `updated_at`，缺少当前 `usage-store` 所需的 `id` 和 `created_at`；通用 schema 同步为保护数据，跳过了 `PRIMARY KEY` 和无默认值 `NOT NULL` 字段，导致单聊写入/读取用量统计时报错。
+- **修复**：在 `packages/server/src/db/hermes/schemas.ts` 增加针对旧 `session_usage` 的安全迁移：服务启动时检测缺少 `id` 或 `created_at` 即重建该表，保留原有 token/model/profile 数据，并用旧 `updated_at` 回填 `created_at`。
+- **验证**：新增 `tests/server/schema-sync.test.ts` 回归用例；`npm test -- --run tests/server/schema-sync.test.ts tests/server/usage-store.test.ts` 通过；`npm run build` 通过；生产重启后 `session_usage` 已包含 `id` 与 `created_at`，ChatRun SSE smoke test 通过。
+- **数据安全**：未覆盖 `/root/.hermes`；重启前备份了 `/root/.hermes-web-ui/hermes-web-ui.db` 和 systemd drop-in 到 `/root/output/pre-session-usage-hotfix-20260521-192601`。
 
 ### 回退要求
 
