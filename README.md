@@ -195,6 +195,122 @@ example.com {
 
 ---
 
+## 生产升级要求（2026-05-21）
+
+本仓库已用于将生产 WebUI 从 `0.4.9` 升级到 `0.5.30 HttpSse`。升级目标不是“全站完全移除 WebSocket”，而是保证公司网络中最常用的两条聊天链路可用：
+
+- 普通单聊 / ChatRun：HTTP REST + SSE。
+- Group Chat / 群聊：HTTP REST + SSE。
+
+### 强制约束
+
+1. **禁止覆盖 `/root/.hermes`**。
+   - `/root/.hermes` 是 Hermes Agent 的核心数据目录，包含 `config.yaml`、`.env`、`auth.json`、`state.db`、`cron/jobs.json`、`skills`、`scripts`、`profiles`、`sessions`、`outputs` 等。
+   - 升级 WebUI 只能替换 WebUI 程序包或 systemd 指向，不能删除、重建或覆盖 `/root/.hermes`。
+2. **升级前必须备份当前状态**。
+   - 至少备份 `/root/.hermes`、当前 WebUI 程序目录、当前 systemd unit/drop-in。
+   - 备份文件中可能包含密钥、Cookie、Token、OAuth 登录态，必须私有保存。
+3. **升级过程只切换 WebUI，不重置 Hermes Gateway 数据**。
+   - `hermes-gateway.service` 使用现有 `/root/.hermes`。
+   - 如需重启服务，只允许重启 WebUI/Gateway 服务本身，不允许初始化新的 Hermes home。
+4. **Terminal / Kanban 不作为本次验收失败项**。
+   - Terminal 仍可能使用 WebSocket。
+   - Kanban 相关测试或历史断言不影响 ChatRun / Group Chat 的 HTTP/SSE 验收。
+
+### 推荐生产部署方式
+
+1. 在隔离目录构建本仓库：
+
+```bash
+npm install --ignore-scripts --no-audit --no-fund
+npm run build
+```
+
+2. 在非生产端口先做 smoke test，确认：
+
+```text
+GET /api/hermes/chat-run/events
+GET /api/hermes/group-chat/events
+POST /api/hermes/group-chat/send
+```
+
+3. 将构建好的 WebUI 程序放到独立目录，例如：
+
+```text
+/root/hermes-web-ui-v0.5.30-HttpSse-live-YYYYMMDD-HHMMSS
+```
+
+4. 用 systemd drop-in 切换 `hermes-webui.service` 的 `ExecStart` / `ExecStop` / `ExecReload` / `WorkingDirectory`，不要直接覆盖 `/root/.hermes`：
+
+```text
+/etc/systemd/system/hermes-webui.service.d/override-v0530-httpsse.conf
+```
+
+5. reload 并重启 WebUI：
+
+```bash
+systemctl daemon-reload
+systemctl restart hermes-webui.service
+```
+
+### 生产验证清单
+
+升级后至少确认：
+
+```bash
+systemctl is-active hermes-webui.service
+systemctl is-active hermes-gateway.service
+curl -sS -m 5 http://127.0.0.1:8648/health
+curl -sS -m 5 http://127.0.0.1:8642/health
+```
+
+并验证：
+
+- `/api/hermes/chat-run/events` 返回 `event: connected` / `event: resumed`。
+- `/api/hermes/group-chat/events?token=<WEBUI_TOKEN>` 返回 `event: connected` / `event: joined`。
+- `/root/.hermes/cron/jobs.json` 仍存在，定时任务数量符合预期。
+- `/root/.hermes/skills`、`/root/.hermes/scripts`、`/root/.hermes/profiles`、`/root/.hermes/sessions`、`/root/.hermes/outputs` 仍存在。
+
+### 本次生产升级实测结果
+
+2026-05-21 的生产升级采用以上方式完成，关键信息如下：
+
+```text
+WebUI version: 0.5.30
+WebUI live dir: /root/hermes-web-ui-v0.5.30-HttpSse-live-20260521-095902
+systemd override: /etc/systemd/system/hermes-webui.service.d/override-v0530-httpsse.conf
+pre-upgrade backup: /root/output/pre-upgrade-webui-HttpSse-20260521-095535
+webui 0.5.30 backup: /root/outputs/bak-webui0530.zip
+full Hermes home backup: /root/outputs/bak-hermes-home-20260521.zip
+legacy 0.4.9 rollback backup: /root/output/bak-webui049.zip
+```
+
+实测结论：
+
+- `hermes-webui.service` active。
+- `hermes-gateway.service` active。
+- `/health` 返回 `webui_version: 0.5.30`。
+- ChatRun SSE smoke test 通过。
+- Group Chat SSE + REST smoke test 通过。
+- `/root/.hermes` 未被覆盖。
+- 原有 cron jobs、skills、scripts、profiles、sessions、outputs 均仍存在。
+
+### 回退要求
+
+如升级后异常，优先回退 WebUI 程序和 systemd 指向，不要覆盖 `/root/.hermes`。可使用生产备份中的回退脚本：
+
+```bash
+bash /root/outputs/bak-webui0530/restore-webui0530.sh
+```
+
+如需完整回退到旧版 `0.4.9`，再使用旧版回退包：
+
+```bash
+bash /root/output/bak-webui049/restore-webui049.sh
+```
+
+---
+
 ## Changelog
 
 ### 2026-05-20 — 8 Bug 修复（生产就绪）
